@@ -1,0 +1,13 @@
+LWS importer based on 11.6 scene file format.
+
+Currently supports :
+
+lights (type, transforms)
+objects (nulls and LWO, layers, transforms)
+cameras (transforms)
+
+Scene hierarchy is reconstructed.
+
+Scene properties are set up (frame start, frame end, frame rate)
+
+Heavily in development.
