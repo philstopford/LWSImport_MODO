@@ -1,21 +1,25 @@
 #python
 import math
+import string
 import os
 import lx
 
-'''
-	Very limited initial LWS importer.
+script_name = "Limited LWS Import"
+script_ver = "0.0.6"
 
-	0.0.6 (2014/08/2x) :
-		Working on LWID preflight detection:
+'''
+	0.0.6 (2014/08/26) :
+		Adding some comments to the code.
+		LWID preflight detection:
 			Expectation is that script is used to import LWS into a clean scene, but users will be users.
 			 Need to handle case where we find LWIDs on scene items before we start. Options :
-			  Remove those LWID tags to avoid misfires (preferably in pre-flight).
-			  Prefix LWID tags to avoid flagging them.
-			  Additional tag to indicate that this item has already been processed before and can be ignored.
+			  (Remove those LWID tags to avoid misfires (preferably in pre-flight).)
+			  -> Prefix LWID tags to avoid flagging them.
+			  (Additional tag to indicate that this item has already been processed before and can be ignored.)
 
-	0.0.5 (2014/08/25) :
+	0.0.5 (2014/08/26) :
 		Attempt to be more intelligent about out-of-content folder handling.
+			Try and check for existing files in matched replacement folder(s) for a particular inaccessible path.
 
 	0.0.4 (2014/08/23) :
 		Hierarchy code working.
@@ -57,7 +61,10 @@ meshLocatorList = []
 lightList = []
 cameraList = []
 parentSearchList = []
+originalPathList = []
+replacementPathList = []
 
+# Basic light class
 class Light:
 	numberOfLights = 0
 	def __init__(self, name, lwitemid, parentlwitemid, targetlwitemid, color, lightType,
@@ -92,6 +99,7 @@ class Light:
 
 		Light.numberOfLights += 1
 
+# Basic object class
 class Object:
 	numberOfObjects = 0
 	def __init__(self, lwofile, lwolayer, lwitemid, isnull, parentlwitemid, targetlwitemid,
@@ -126,6 +134,7 @@ class Object:
 
 		Object.numberOfObjects += 1
 
+# Basic camera class
 class Camera:
 	numberOfCameras = 0
 	def __init__(self, name, lwitemid, parentlwitemid, targetlwitemid,
@@ -151,15 +160,45 @@ class Camera:
 
 		Camera.numberOfCameras += 1
 
+# Ask for LW scene
 def main():
 	global contentDir_LW
+	lx.out("{%s %s} started" % (script_name, script_ver))
 	contentDir_LW = lx.eval('pref.value lwio.lwoContentDir ?')
 	lwsFile = customfile('fileOpen', 'Load LWS file', 'lws', 'LWS', '*.lws', contentDir_LW)
 	if (lwsFile != None):
+		preflightChecks()
 		parser_main(lwsFile)
 	else:
 		sys.exit()
 
+# Preflight checks to avoid misfires from previous runs, etc.
+def preflightChecks():
+	# We need to check the scene items for LWID tags and tweak them to avoid using them in the hierarchy, etc. steps later.
+	# We will prefix any numerical values with 'x' to disable them. We will have a penalty in runtime as we will still hoover them up.
+	lx.out("Running preflight checks for LWID tags...")
+	for i in range(lx.eval('query sceneservice item.N ?')):
+		itemID = lx.eval('query sceneservice item.id ? %s' % i)
+		lx.eval('select.drop item')
+		lx.eval('select.item {%s}' % itemID)
+		item_name = lx.eval('item.name ?')
+		item_tags, item_tagValues = buildHierarchy_itemTags(item_name)
+		if (len(item_tags) != 0):
+			lx.out("item tags found. Searching....")
+			try :
+				lwidIndex = item_tags.index('LWID')
+			except:
+				break
+			lx.out('LWID tag found at : {%d} ' % lwidIndex)
+			lwidValue = item_tagValues[lwidIndex]
+			lx.out('LWID value : {%s} ' % lwidValue)
+			#Add our prefix
+			if (lwidValue.startswith('x')):
+				pass
+			else:
+				lx.eval('!item.tag string LWID x%s' % lwidValue)
+
+# Read the scene file into memory and drive the scene set up in modo
 def parser_main(fname):
 	global content
 	#Load our scene into a list
@@ -175,6 +214,7 @@ def parser_main(fname):
 	doCameras()
 	buildHierarchy()
 
+# Three coordinating methods to handle the lights, cameras and geo import.
 def doLights():
 	parseLights()
 	makeLights()
@@ -187,6 +227,7 @@ def doCameras():
 	parseCameras()
 	makeCameras()
 
+# Read out light properties and set properties in class
 def parseLights():
 	global content
 	global lights
@@ -304,6 +345,7 @@ def parseLights():
 							xscl_keys, xscl_vals, yscl_keys, yscl_vals, zscl_keys, zscl_vals
 							))
 
+# Make our lights and set them up to match LW configuration based on light class
 def makeLights():
 	global lights
 	lightTypes = {0:'sunLight', 1:'areaLight', 2:'cylinderLight', 3:'domeLight', 4:'photometryLight', 5:'pointLight', 6:'portal', 7:'spotLight'}
@@ -364,6 +406,7 @@ def makeLights():
 		for key in range(len(light.zsclkey)):
 			makeKey(light.zsclkey[key], light.zsclval[key])
 
+# Read out object/null properties and set properties in class
 def parseObjects():
 	global content
 	global objects
@@ -397,16 +440,24 @@ def parseObjects():
 
 		temp = content[objectLines[objectNumber]].split(' ')
 		if(temp[0] == 'LoadObjectLayer'):
-			lwoFile = temp[3]
+			lwofile = temp[3]
+			if (len(temp) > 4):
+				for token in range(4, len(temp)):
+					lwofile += (' ' + temp[token])
 			# We need our ID here to handle parenting later.
 			object_itemID_LW = temp[2]
 			lwolayer = temp[1]
 			isnull = False
 		else:
-			lwoFile = temp[2] # We abuse this to hold our null name.
+			lwofile = temp[2]
+			if (len(temp) > 3):
+				for token in range(3, len(temp)):
+					lwofile += (' ' + temp[token]) # We abuse this to hold our null name.
 			# We need our ID here to handle parenting later.
 			object_itemID_LW = temp[1]
 			isnull = True
+
+		lx.out(lwofile)
 
 		object_parentitemID_LW = 0
 		# Pick up any target and parent item IDs
@@ -466,12 +517,13 @@ def parseObjects():
 
 		# Create a new object instance in our list.
 
-		objects.append(Object(lwoFile, lwolayer, object_itemID_LW, isnull, object_parentitemID_LW, object_targetitemID_LW,
+		objects.append(Object(lwofile, lwolayer, object_itemID_LW, isnull, object_parentitemID_LW, object_targetitemID_LW,
 							xpos_keys, xpos_vals, ypos_keys, ypos_vals, zpos_keys, zpos_vals,
 							hrot_keys, hrot_vals, prot_keys, prot_vals, brot_keys, brot_vals,
 							xscl_keys, xscl_vals, yscl_keys, yscl_vals, zscl_keys, zscl_vals
 							))
 
+# Make our mesh items and locators and set them up to match LW configuration based on light class
 def makeObjects():
 	global objects
 	global contentDir_LW
@@ -483,7 +535,7 @@ def makeObjects():
 		else:
 			# Import our LWO. For this, we need some heavy lifting with the item IDs, for layered objects (filtering only mesh items).
 			beforeImport = set(meshList())
-			importLWO(lwofile)
+			importLWO(lwObject.lwofile)
 			afterImport = set(meshList())
 			# Newly added mesh items below. Since we want to index with this, we need to convert to a list.
 			newlyAdded = list(afterImport.difference(beforeImport))
@@ -550,43 +602,7 @@ def makeObjects():
 		for key in range(len(lwObject.zsclkey)):
 			makeKey(lwObject.zsclkey[key], lwObject.zsclval[key])
 
-def meshList():
-	mList = []
-	for i in range(lx.eval('query sceneservice item.N ?')):
-	    type = lx.eval('query sceneservice item.type ? %s' % i)
-	    if (type == "mesh"):
-	    	mList.append(lx.eval('query sceneservice item.id ? %s' % i))
-	return mList
-
-def locatorList():
-	lList = []
-	for i in range(lx.eval('query sceneservice item.N ?')):
-	    type = lx.eval('query sceneservice item.type ? %s' % i)
-	    if (type == "locator"):
-	    	lList.append(lx.eval('query sceneservice item.id ? %s' % i))
-	return lList
-
-def meshLocatorList():
-	mList = meshList()
-	lList = locatorList()
-	return mList + lList
-
-def cameraList():
-	cList = []
-	for i in range(lx.eval('query sceneservice item.N ?')):
-	    type = lx.eval('query sceneservice item.type ? %s' % i)
-	    if (type == "camera"):
-	    	cList.append(lx.eval('query sceneservice item.id ? %s' % i))
-	return cList
-
-def lightList():
-	lList = []
-	for i in range(lx.eval('query sceneservice item.N ?')):
-	    type = lx.eval('query sceneservice item.type ? %s' % i)
-	    if (type == "light"):
-	    	lList.append(lx.eval('query sceneservice item.id ? %s' % i))
-	return lList
-
+# Read out camera properties and set properties in class
 def parseCameras():
 	global content
 	global cameras
@@ -663,6 +679,7 @@ def parseCameras():
 							hrot_keys, hrot_vals, prot_keys, prot_vals, brot_keys, brot_vals
 							))
 
+# Make our cameras and set them up to match LW configuration based on light class
 def makeCameras():
 	global cameras
 	for camera in cameras:
@@ -707,6 +724,49 @@ def makeCameras():
 		for key in range(len(camera.brotkey)):
 			makeKey(camera.brotkey[key], str_radians_to_degrees(camera.brotval[key]))
 
+# Generate list of all mesh items in scene
+def meshList():
+	mList = []
+	for i in range(lx.eval('query sceneservice item.N ?')):
+	    type = lx.eval('query sceneservice item.type ? %s' % i)
+	    if (type == "mesh"):
+	    	mList.append(lx.eval('query sceneservice item.id ? %s' % i))
+	return mList
+
+# Generate list of all locator items in scene
+def locatorList():
+	lList = []
+	for i in range(lx.eval('query sceneservice item.N ?')):
+	    type = lx.eval('query sceneservice item.type ? %s' % i)
+	    if (type == "locator"):
+	    	lList.append(lx.eval('query sceneservice item.id ? %s' % i))
+	return lList
+
+# Generate list of all mesh and locator items in scene
+def meshLocatorList():
+	mList = meshList()
+	lList = locatorList()
+	return mList + lList
+
+# Generate list of all camera items in scene
+def cameraList():
+	cList = []
+	for i in range(lx.eval('query sceneservice item.N ?')):
+	    type = lx.eval('query sceneservice item.type ? %s' % i)
+	    if (type == "camera"):
+	    	cList.append(lx.eval('query sceneservice item.id ? %s' % i))
+	return cList
+
+# Generate list of all light items in scene
+def lightList():
+	lList = []
+	for i in range(lx.eval('query sceneservice item.N ?')):
+	    type = lx.eval('query sceneservice item.type ? %s' % i)
+	    if (type == "light"):
+	    	lList.append(lx.eval('query sceneservice item.id ? %s' % i))
+	return lList
+
+# Set modo scene properties to align with LW scene properties.
 def sceneProperties():
 	firstFrame = int(extractValueFromSetting('FirstFrame'))
 	lx.out(firstFrame)
@@ -726,9 +786,11 @@ def sceneProperties():
 	lx.eval('time.range scene out:%d ' % (tempVal))
 	lx.eval('time.range current out:%d ' % (tempVal))
 
+# Simple helper to set modo values
 def setModoParameter(parameter, value):
 	lx.eval('{%s} {%s}' % (parameter, value))
 
+# Simple error handling.
 def reportError(errorString):
 	    lx.eval('dialog.setup error')
 	    lx.eval('dialog.title {Something went wrong}')
@@ -736,11 +798,13 @@ def reportError(errorString):
 	    lx.eval('dialog.open')
 	    sys.exit()
 
+# Simple helper to get value for a setting.
 def extractValueFromSetting(settingString):
 	global content
 	value = extractValue(content[findSetting(settingString)])
 	return value
 
+# Simple helper to find a setting in the content[] array for the LW scene.
 def findSetting(settingString):
 	global content
 	fsLineCounter = 0
@@ -753,52 +817,89 @@ def findSetting(settingString):
 			reportError('Parameter {%s} not found - aborting' % settingString)
 	return fsLineCounter
 
+# Simple helper to extract value for a parameter in the LW scene.
 def extractValue(tempString):
 	value = tempString.split(' ', 1)
 	return value[1]
 
+# Port of call for LWO loading
 def importLWO(path):
+	lx.out(path)
 	path = validatePath(path)
 	# Load referenced LWO from scene file.
 	try:
-		lx.eval('scene.open %s import' % path)
+		lx.eval('scene.open {%s} import' % path)
 	except:
 		# File import failed. Add an empty mesh and move on.
 		lx.eval('item.create mesh')
 		lx.eval('item.name {%s}' % path)
 
-def fixPath(path, colonIndex):
-	path[colonIndex] = '\/'
-	path = '\/' + path
-	return path
-
+# Check path for validity and try to manage cases where the path is not correct (e.g. out of content folder, different platform)
 def validatePath(path):
-	'''
-		User could have opted for a location outside the content folder.
-		On Mac, LW prepends the volume name (e.g. Macintosh HD:Users/username/....)
-		So let's go looking for the first : in the path to see if this is such a case.
-	'''
-	try:
-		slashIndex = path.index('\/')
-		macScene = True
-	except:
-		macScene = False
+	global originalPathList
+	global replacementPathList
+	global contentDir_LW
 
-	try:
+	lx.out(path)
+	validPath = os.path.isfile(contentDir_LW + os.sep + path)
+	if (validPath == True):
+		return(contentDir_LW + os.sep + path)
+	else:
+		# Mac LW can be very annoying. Let's see if we have such a case here.
 		colonIndex = path.index(':')
-		outofContent = True
-	except:
-		outofContent = False
+		if (colonIndex > 2): # Mac does VolumeName:myDir/myFile.lwo, so the corresponding file would be /Volumes/VolumeName/myDir/myFile.lwo
+			testPath = '/Volumes/' + string.replace(path,':','/',1)
+			validPath = os.path.isfile(testPath)
+		if (validPath == True):
+			return testPath
 
-	if((outofContent == True) and (macScene == True)):
-		path = fixPath(path, colonIndex)
+		lastPathSep = path.rfind('\\')
+		if (lastPathSep == -1): # Not found
+			lastPathSep = path.rfind('/')
 
-	return path
+		separator = path[lastPathSep]
+		workingReplacement = False
 
+		# Let's check whether we have encountered this path before and have a potential replacement.
+		try:
+			# We can have more than one replacement path for a given original path. We'll need to check all cases as appropriate.
+			# We look for each matching instance for the original path and then populate a replacement path temporary array for use later.
+			rpTempArray = []
+			for entry in range(len(originalPathList)):
+				if (originalPathList[entry] == path[:lastPathSep]):
+					rpTempArray.append(replacementPathList[entry])
+
+			# Walk our replacement path temporary array to see if any instance delivers a valid path to our asset
+			for entry in range(len(rpTempArray)):
+				newPath = rpTempArray[entry] + os.sep + path[lastPathSep+1:]
+				# Let's see if this is actually a valid file
+				workingReplacement = os.path.isfile(newPath)
+				if(workingReplacement == True):
+					break
+		except:
+			pass
+
+		if (workingReplacement == False):
+			brokenObject = path[lastPathSep + 1:]
+			replacementFileString = "Locate " + brokenObject
+			newPath = customfile('fileOpen', replacementFileString, 'lwo', 'LWO', '*.lwo', contentDir_LW)
+			if (newPath == None):
+				reportError("Aborting since replacement path not defined")
+				sys.exit()
+
+			# First time encountering this path. Let's store it and the replacement in case we hit this again and can handle it cleanly.
+			originalPathList.append(path[:lastPathSep])
+			lastPathSep = newPath.rfind(os.sep)
+			replacementPathList.append(newPath[:lastPathSep]) 
+
+		return newPath
+
+# Simple key creator for modo channels.
 def makeKey(time,value):
 	# Make key on channel at given time
 	lx.eval('channel.key {%s} {%s} ' % (time, value) )
 
+# Read out all of the key frames for a channel
 def keyBlockExtract(channel, startline, endline):
 	global content
 	channel_label = ['xpos', 'ypos', 'zpos', 'hrot', 'prot', 'brot', 'xscl', 'yscl', 'zscl']
@@ -852,9 +953,11 @@ def animationExtract(startLine, endLine, keyarray, valuearray):
 			reportError('Key line not found')
 		lineCounter += 1
 
+# LW stores rotation in radians. Need to map to degrees for modo.
 def str_radians_to_degrees(radians):
 	return str((float(radians) * (180/math.pi)))
 
+# Here's where we coordinate the work to build out the hierarchical structure by item
 def buildHierarchy():
 	global objects
 	global lights
@@ -872,12 +975,14 @@ def buildHierarchy():
 	for camera in cameras:
 		buildHierarchy_doParenting(camera.modoid, camera.parentlwitemid, meshLocatorList,lightList,cameraList)
 
+# Rebuild all of our lists by-type to optimize parent searches
 def buildHierarchy_genParentLists():
 	mlList = meshLocatorList()
 	lList = lightList()
 	cList = cameraList()
 	return (mlList, lList,cList)
 
+# Return the list of potential parents. LW prefixes each item ID with the genus of the item type. We can use this to our advantage.
 def buildHierarchy_setParentList(parentID,meshLocatorList,lightList,cameraList):
 
 	# Filter search to reduce runtime.
@@ -892,6 +997,7 @@ def buildHierarchy_setParentList(parentID,meshLocatorList,lightList,cameraList):
 		parentSearchList = cameraList
 	return parentSearchList
 
+# Read out tags and values for the item.
 def buildHierarchy_itemTags(item_name):
 	item_tags = []
 	temp = lx.evalN('query sceneservice item.tagTypes ? {%s} ' % item_name)
@@ -904,6 +1010,7 @@ def buildHierarchy_itemTags(item_name):
 		item_tagValues.append(i)
 	return (item_tags, item_tagValues)
 
+# Heavy lifting for parenting by getting the list of potential parents and then walking it to find the item with the matching LWID tag for our parent item ID.
 def buildHierarchy_doParenting(modo_itemid, lwparentitemid, meshLocatorList,lightList,cameraList):
 	global parentSearchList
 	if(lwparentitemid != 0):
@@ -939,7 +1046,7 @@ def buildHierarchy_doParenting(modo_itemid, lwparentitemid, meshLocatorList,ligh
 					lx.eval('select.drop item')
 					break
 
-#From Gwynne Reddick
+# From Gwynne Reddick
 def customfile(type, title, format, uname, ext, save_ext=None, path=None):
     '''
         Open a file requester for a custom file type and return result
