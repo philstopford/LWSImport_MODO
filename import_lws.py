@@ -8,6 +8,13 @@ script_name = "Limited LWS Import"
 script_ver = "0.0.6"
 
 '''
+	0.0.7 (2014/08/30) :
+		More bug fixes.
+			Fixed case where transform locators already existed.
+			Fixed case where LWO had hierarchy as-imported.
+			Set rotation order.
+			Fixed mismatched rotation setting.
+
 	0.0.6 (2014/08/26) :
 		Adding some comments to the code.
 		LWID preflight detection:
@@ -540,14 +547,21 @@ def makeObjects():
 			# Newly added mesh items below. Since we want to index with this, we need to convert to a list.
 			newlyAdded = list(afterImport.difference(beforeImport))
 			# We need to remove all layers except the one referenced in the LWO line.
-			# There is a limitation here in that we can't handle discontinuous layers in the LWO (e.g. blank layers)
-			# MODO imports LWO layers in-sequence - the populated layers are imported and get an incremented item ID.
 			targetLayer = int(lwObject.lwolayer) - 1 # convert from 1-index to 0-index
+			lx.eval('select.drop item')
+			# Unparent all our newly added items - we'll rebuild the hierarchy later. Simplifies deletion as well.
+			for item in range(len(newlyAdded)):
+				lx.eval('select.item {%s} add' % newlyAdded[item])
+				lx.eval('item.parent parent:{}')
 			lx.eval('select.drop item')
 			for item in range(len(newlyAdded)):
 				if(item != targetLayer):
-					lx.eval('select.item {%s}' % newlyAdded[item])
-					lx.eval('item.delete')
+					lx.eval('select.item {%s} add' % newlyAdded[item])
+			try:
+				# Delete all except required item.
+				lx.eval('!item.delete')
+			except:
+				pass # no items to delete.
 			lx.eval('select.item {%s}' % newlyAdded[targetLayer])
 		itemName = lx.eval('query sceneservice selection ? locator')
 		lwObject.modoid = itemName
@@ -556,18 +570,25 @@ def makeObjects():
 		lx.eval('item.tag string LWID %s' % lwObject.lwitemid)
 
 		# Transform items
-		lx.eval('transform.add pos')
-		lx.eval('select.drop item')
-		lx.eval('select.item {%s}' % itemName)
-		lx.eval('transform.add rot')
-		lx.eval('select.drop item')
-		lx.eval('select.item {%s}' % itemName)
-		lx.eval('transform.add scl')
-		lx.eval('select.drop item')
-		lx.eval('select.item {%s}' % itemName)
 		pos_xfrm_item = lx.eval('query sceneservice item.xfrmPos ? {%s}' % itemName)
+		if (pos_xfrm_item == None):
+			lx.eval('select.item {%s}' % itemName)
+			lx.eval('transform.add pos')
+			lx.eval('select.drop item')
+			pos_xfrm_item = lx.eval('query sceneservice item.xfrmPos ? {%s}' % itemName)
 		rot_xfrm_item = lx.eval('query sceneservice item.xfrmRot ? {%s}' % itemName)
+		if (rot_xfrm_item == None):
+			lx.eval('select.item {%s}' % itemName)
+			lx.eval('transform.add rot')
+			lx.eval('transform.channel order zxy')
+			lx.eval('select.drop item')
+			rot_xfrm_item = lx.eval('query sceneservice item.xfrmRot ? {%s}' % itemName)
 		scl_xfrm_item = lx.eval('query sceneservice item.xfrmScl ? {%s}' % itemName)
+		if (scl_xfrm_item == None):
+			lx.eval('select.item {%s}' % itemName)
+			lx.eval('transform.add scl')
+			lx.eval('select.drop item')
+			scl_xfrm_item = lx.eval('query sceneservice item.xfrmScl ? {%s}' % itemName)
 
 		# Position keys
 		lx.eval('select.channel {%s:pos.X} set' % pos_xfrm_item)
@@ -581,10 +602,10 @@ def makeObjects():
 			makeKey(lwObject.zposkey[key], lwObject.zposval[key])
 
 		# Rotation keys
-		lx.eval('select.channel {%s:rot.Y} set' % rot_xfrm_item)
+		lx.eval('select.channel {%s:rot.X} set' % rot_xfrm_item)
 		for key in range(len(lwObject.protkey)):
 			makeKey(lwObject.protkey[key], str_radians_to_degrees(lwObject.protval[key]))
-		lx.eval('select.channel {%s:rot.X} set' % rot_xfrm_item)
+		lx.eval('select.channel {%s:rot.Y} set' % rot_xfrm_item)
 		for key in range(len(lwObject.hrotkey)):
 			makeKey(lwObject.hrotkey[key], str_radians_to_degrees(lwObject.hrotval[key]))
 		lx.eval('select.channel {%s:rot.Z} set' % rot_xfrm_item)
